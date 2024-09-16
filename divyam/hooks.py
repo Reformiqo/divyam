@@ -118,6 +118,10 @@ app_license = "mit"
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
 
+override_doctype_class = {
+	"Subcontracting Receipt": "divyam.subcontracting.SubcontractingReceipt",
+}
+
 # Document Events
 # ---------------
 # Hook on document methods and events
@@ -133,7 +137,7 @@ app_license = "mit"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
+scheduler_events = {
 # 	"all": [
 # 		"divyam.tasks.all"
 # 	],
@@ -148,8 +152,14 @@ app_license = "mit"
 # 	],
 # 	"monthly": [
 # 		"divyam.tasks.monthly"
-# 	],
-# }
+# 	],  
+#set cron job for every 5 minutes
+    "cron": {
+        "*/5 * * * *": [
+            "divyam.shopify.get_shopify_data",
+        ]
+    }
+}
 
 # Testing
 # -------
@@ -227,3 +237,12 @@ app_license = "mit"
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
 
+fixtures = [
+    {"doctype": "Client Script", 
+    "filters": [["module" , "in" , ("Divyam" )]]
+    },
+    {"doctype": "Custom Field",
+    "filters": [["module" , "in" , ("Divyam" )]]
+    },
+  
+    ]

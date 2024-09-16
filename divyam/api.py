@@ -133,4 +133,40 @@ def get_sgst(item):
 			return float(tax_line.get("price")), float(tax_line.get("rate"))
 
 
-	
+@frappe.whitelist(allow_guest=True)
+def delete_sales_orders():
+    # orders = frappe.get_all("Sales Order", 'SAL-ORD-2024-05034')
+    # for order in orders:
+    #     sales_order = frappe.get_doc("Sales Order", order.name)
+    frappe.delete_doc("Sales Order", 'SAL-ORD-2024-05034')
+    frappe.db.commit()
+    return "Sales Orders Deleted"
+
+@frappe.whitelist(allow_guest=True)
+def updtate_item_tax_template():
+    # Execute a raw SQL query to find items with no HSN code and no entries in the taxes table
+    items = frappe.db.sql("""
+        SELECT name 
+        FROM `tabItem` 
+        WHERE gst_hsn_code IS NOT NULL 
+        AND name NOT IN (
+            SELECT parent 
+            FROM `tabItem Tax` 
+            WHERE parenttype = 'Item'
+        )
+    """, as_dict=True)
+
+    for item in items:
+        item_doc = frappe.get_doc("Item", item.get("name"))
+        item_doc.append("taxes", {
+            "item_tax_template": "GST 5% - DE",
+            "tax_category": "In-State"
+        })
+        item_doc.append("taxes", {
+            "item_tax_template": "GST 5% - DE",
+            "tax_category": "Out-State"
+        })
+        item_doc.save()
+        frappe.db.commit()
+
+    return len(items)
