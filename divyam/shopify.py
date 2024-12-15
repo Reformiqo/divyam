@@ -3,7 +3,7 @@ import requests
 import frappe
 from frappe.utils import getdate, now
 
-setting = frappe.get_doc("Shopify Settings")
+setting = frappe.get_doc("Divyam Settings")
 api_key = setting.get_password("shopify_key")
 
 
@@ -39,35 +39,20 @@ def set_shopify():
             frappe.log_error(f"Error fetching Shopify data: {e}")
             break
     return orders
-
 @frappe.whitelist()
-def syn_order():
-    order_id = '#84650'
+def get_single_shopify_data(order_id):
     base_url = f"https://doeraa.myshopify.com/admin/api/2021-04/orders/{order_id}.json"
     headers = {
         "X-Shopify-Access-Token": api_key
     }
-    response = requests.get(base_url, headers=headers)
-    response.raise_for_status()  # This will raise an HTTPError for bad responses
-    order_data = response.json().get('order')
-    return order_data
-    
-@frappe.whitelist()
-def sync_orders():
-    unsync_orders = ["#88721", "#88722", "#88723", "#88724", "#88725", "#88726", "#88727", "#88728", "#88729", "#88730", "#88731", "#88732", "#88733", "#88734"]
-    orders = []
-    
-    for order_id in unsync_orders:
-        base_url = f"https://doeraa.myshopify.com/admin/api/2021-04/orders/{order_id}.json"
-        headers = {
-            "X-Shopify-Access-Token": api_key
-        }
+    try:
         response = requests.get(base_url, headers=headers)
         response.raise_for_status()
         order_data = response.json().get('order')
-        orders.append(order_data)
-    
-    return orders
+        return order_data
+    except requests.exceptions.RequestException as e:
+        frappe.log_error(f"Error fetching Shopify data: {e}")
+        return e
 
 @frappe.whitelist()
 def get_shopify_data():
@@ -78,7 +63,7 @@ def get_shopify_data():
     }
     orders = []
     # # All orders except draft
-    url = f"{base_url}?limit=10"
+    url = f"{base_url}?limit=250"
     response = requests.get(url, headers=headers)
     response.raise_for_status()
     orders = response.json()
@@ -172,6 +157,7 @@ def create_item(item_code, item_name):
         "item_code": item_code,
         "item_name": item_name,
         "item_group": "Products",
+        "gst_hsn_code": "998821",
         "uom": "Meter",
     })
     item.insert(ignore_permissions=True)
@@ -232,7 +218,7 @@ def get_address(order, customer_name):
         customer_address = frappe.get_doc({
             "doctype": "Address",
             "address_title": customer_name,
-            "address_line1": address.get("address1"),
+            "address_line1": address.get("address1")[:140],
             "city": address.get("city"),
             "state": address.get("province"),
             "country": address.get("country"),
@@ -374,3 +360,8 @@ def create_shipping_charges(order):
             doc.save()
             frappe.db.commit()
     
+@frappe.whitelist()
+def sync_shopify():
+    #sync last 10 orders
+    orders = get_shopify_data()
+    return orders

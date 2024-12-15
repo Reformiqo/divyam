@@ -2,8 +2,9 @@ import requests
 import frappe
 from frappe.utils import getdate, now
 
-setting = frappe.get_doc("Shopify Settings")
+setting = frappe.get_doc("Divyam Settings")
 api_key = setting.get_password("shopify_key")
+
 
 @frappe.whitelist()
 def get_shopify_data():
@@ -13,7 +14,7 @@ def get_shopify_data():
     }
     orders = []
     # All orders except draft
-    url = f"{base_url}?created_at_min=2023-04-01T00:00:00Z&limit=250"
+    url = f"{base_url}limit=250"
     response = requests.get(url, headers=headers)
     response.raise_for_status()
     response_data = response.json()
