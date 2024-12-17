@@ -170,3 +170,17 @@ def updtate_item_tax_template():
         frappe.db.commit()
 
     return len(items)
+
+@frappe.whitelist(allow_guest=True)
+def delete_doc(doctype, name):
+    # yse frappe.db.sql to delete the document
+    frappe.db.sql(f"DELETE FROM `tab{doctype}` WHERE name = '{name}'")
+    frappe.db.commit()
+    return "Document Deleted"
+@frappe.whitelist(allow_guest=True)
+def rename_doc(doctype, old_name, new_name):
+    # use frappe.db.sql to rename the document
+    frappe.db.sql(f"UPDATE `tab{doctype}` SET name = '{new_name}' WHERE name = '{old_name}'")
+    frappe.db.commit()
+    return "Document Renamed"
+    
