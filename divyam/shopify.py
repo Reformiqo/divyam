@@ -3,9 +3,7 @@ import requests
 import frappe
 from frappe.utils import getdate, now
 
-setting = frappe.get_doc("Divyam Settings")
-api_key = setting.get_password("shopify_key")
-
+api_key = frappe.local.conf.shopify_api_key
 
 @frappe.whitelist()
 def set_shopify():
@@ -360,8 +358,3 @@ def create_shipping_charges(order):
             doc.save()
             frappe.db.commit()
     
-@frappe.whitelist()
-def sync_shopify():
-    #sync last 10 orders
-    orders = get_shopify_data()
-    return orders
