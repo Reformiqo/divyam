@@ -6,13 +6,13 @@ from frappe.utils import getdate, now
 api_key = frappe.local.conf.shopify_api_key
 
 @frappe.whitelist()
-def set_shopify():
+def set_shopify(limit=250):
     base_url = "https://doeraa.myshopify.com/admin/api/2021-04/orders.json"
     headers = {
         "X-Shopify-Access-Token": api_key,
     }
     orders = []
-    url = f"{base_url}?limit=250"
+    url = f"{base_url}?limit={limit}"
     while url:
         try:
             response = requests.get(url, headers=headers)
@@ -69,6 +69,21 @@ def get_shopify_data():
     #remove duplicate items from the sales order
     
     return create_sales_order(orders.get('orders', []))
+
+@frappe.whitelist()
+def sync_shopify_orders(limit=250):
+    """
+    Manually trigger the synchronization of Shopify orders and create Sales Orders in the system.
+    """
+    try:
+        shopify_orders = set_shopify(limit) 
+        sales_orders = create_sales_order(shopify_orders)          
+        return f"{len(sales_orders)} Sales Orders created successfully!"
+    except Exception as e:
+        # Log and notify the user about any errors during synchronization
+        frappe.log_error(f"Error during Shopify order sync: {e}")
+        frappe.throw(f"An error occurred while syncing Shopify orders: {e}")
+
     
 
 def create_sales_order(orders):
@@ -334,7 +349,7 @@ def remove_item():
 #create discount
 @frappe.whitelist()
 def create_discount():
-    orders = set_shopify()
+    orders = set_shopify(limit=250)
     discount_codes = []
     for o in orders:
         discount_code = o.get('discount_codes', [])
