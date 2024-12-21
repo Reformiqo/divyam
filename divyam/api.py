@@ -186,14 +186,11 @@ def rename_doc(doctype, old_name, new_name):
     
 @frappe.whitelist(allow_guest=True)
 def update_sales_invoice_shopify_order_id():
-    # sales_invoices = frappe.get_all("Sales Invoice", {"docstatus": 0, "company": "Doeraa Private Limited"})
-    # for sales_invoice in sales_invoices:
-    #     si = frappe.get_doc("Sales Invoice", sales_invoice.get("name"))
-    #     shopify_order_id = frappe.db.get_value("Sales Order", si.items[0].sales_order, "shopify_order_number")
-    #     frappe.db.set_value("Sales Invoice", si.name, "shopify_order_id", shopify_order_id)
-    # frappe.db.commit()
-    # return "Sales Invoice Updated"
-    # solve the above usinng frappe.db.sql
-    frappe.db.sql("UPDATE `tabSales Invoice` si JOIN `tabSales Order` so ON si.items[0].sales_order = so.name SET si.shopify_order_id = so.shopify_order_number WHERE si.docstatus = 0 AND si.company = 'Doeraa Private Limited'")
+    sales_invoices = frappe.get_all("Sales Invoice", {"docstatus": 0, "company": "Doeraa Private Limited"})
+    for sales_invoice in sales_invoices:
+        si = frappe.get_doc("Sales Invoice", sales_invoice.get("name"))
+        shopify_order_id = frappe.db.get_value("Sales Order", si.items[0].sales_order, "shopify_order_number")
+        frappe.db.set_value("Sales Invoice", si.name, "shopify_order_id", shopify_order_id)
     frappe.db.commit()
     return "Sales Invoice Updated"
+    
