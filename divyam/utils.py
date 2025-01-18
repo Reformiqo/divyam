@@ -176,3 +176,11 @@ def get_returned_qty_map(purchase_receipt):
 	)
 
 	return returned_qty_map
+
+@frappe.whitelist()
+def delete_invoices(doctype, status=None):
+	if not status:
+		status = "Cancelled"
+	frappe.db.sql(f"DELETE from `tab{doctype}` where status = '{status}'")
+	frappe.db.commit()
+	return "Deleted Successfully"
