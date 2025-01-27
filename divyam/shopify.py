@@ -1,7 +1,7 @@
 from frappe.utils.data import cint
 import requests
 import frappe
-from frappe.utils import getdate, now
+from frappe.utils import getdate, now, flt
 
 api_key = frappe.local.conf.shopify_api_key
 
@@ -115,7 +115,7 @@ def create_sales_order(orders):
                 'transaction_date': getdate(order.get('created_at')),
                 'shopify_order_id': order.get('id'),
                 'shopify_order_number': order.get('name'),
-                "discount_amount": calculate_discount(order),
+                "discount_amount": flt(calculate_discount(order)),
                 
             })
             frappe.flags.ignore_validate = True
