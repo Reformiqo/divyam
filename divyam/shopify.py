@@ -321,35 +321,69 @@ def create_customer(customer_name):
     if frappe.db.exists("Customer", {"customer_name": customer_name}):
         customer = frappe.get_doc("Customer", {"customer_name": customer_name})
     else:
-        customer = frappe.get_doc(
-            {"doctype": "Customer", "customer_name": customer_name}
-        )
-        customer.insert(ignore_permissions=True)
-        frappe.db.commit()
+        try:
+            customer = frappe.get_doc(
+                {
+                    "doctype": "Customer",
+                    "customer_name": customer_name,
+                    "customer_type": "Individual",
+                    "customer_group": "Individual",
+                    "territory": "India",
+                    "gst_category": "Unregistered",
+                }
+            )
+            customer.insert(ignore_permissions=True)
+            frappe.db.commit()
+        except Exception as e:
+            frappe.log_error(f"Error creating customer {customer_name}: {str(e)}")
+            raise
     return customer.name
 
 
 def get_address(order, customer_name):
-    address = order.get("shipping_address")
-    if not address:
+    shipping_address = order.get("shipping_address")
+    billing_address = order.get("billing_address")
+
+    if not shipping_address and not billing_address:
         return None
 
-    if frappe.db.exists("Address", {"address_title": customer_name}):
-        customer_address = frappe.get_doc("Address", {"address_title": customer_name})
+    # Use billing address if available, otherwise use shipping address
+    address_data = billing_address or shipping_address
+
+    # Create a unique address title that includes customer reference
+    address_title = f"{customer_name}-Billing"
+
+    if frappe.db.exists("Address", {"address_title": address_title}):
+        customer_address = frappe.get_doc("Address", {"address_title": address_title})
     else:
         customer_address = frappe.get_doc(
             {
                 "doctype": "Address",
-                "address_title": customer_name,
-                "address_line1": address.get("address1")[:140],
-                "city": address.get("city"),
-                "state": address.get("province"),
-                "country": address.get("country"),
-                "pincode": address.get("zip"),
+                "address_title": address_title,
+                "address_type": "Billing",
+                "address_line1": address_data.get("address1")[:140],
+                "address_line2": address_data.get("address2"),
+                "city": address_data.get("city"),
+                "state": address_data.get("province"),
+                "country": address_data.get("country"),
+                "pincode": address_data.get("zip"),
+                "phone": address_data.get("phone"),
+                "email_id": order.get("contact_email"),
+                "is_primary_address": 1,
+                "is_shipping_address": 1,
+                "links": [{"link_doctype": "Customer", "link_name": customer_name}],
             }
         )
-        customer_address.insert(ignore_permissions=True)
-        frappe.db.commit()
+
+        try:
+            customer_address.insert(ignore_permissions=True)
+            frappe.db.commit()
+        except Exception as e:
+            frappe.log_error(
+                f"Error creating address for customer {customer_name}: {str(e)}"
+            )
+            return None
+
     return customer_address.name
 
 
