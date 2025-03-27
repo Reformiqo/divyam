@@ -92,6 +92,59 @@ def sync_shopify_orders(limit=1):
         frappe.throw(f"An error occurred while syncing Shopify orders: {e}")
 
 
+@frappe.whitelist()
+def sync_orders_from_date():
+    """
+    Sync Shopify orders from 23rd of the current month
+    """
+    try:
+        # Construct the date string in ISO format for the 23rd of current month
+        current_month = now()[:7]  # Gets YYYY-MM
+        start_date = f"{current_month}-23T00:00:00Z"
+
+        base_url = "https://doeraa.myshopify.com/admin/api/2021-04/orders.json"
+        headers = {
+            "X-Shopify-Access-Token": api_key,
+        }
+
+        # Add created_at_min parameter to filter orders
+        url = f"{base_url}?created_at_min={start_date}&limit=250"
+
+        orders = []
+        while url:
+            try:
+                response = requests.get(url, headers=headers)
+                response.raise_for_status()
+                response_data = response.json()
+                orders.extend(response_data.get("orders", []))
+
+                # Get the 'Link' header for pagination
+                link_header = response.headers.get("Link")
+                if link_header:
+                    links = link_header.split(",")
+                    next_url = None
+                    for link in links:
+                        if 'rel="next"' in link:
+                            next_url = link[link.find("<") + 1 : link.find(">")]
+                            break
+                    url = next_url
+                else:
+                    url = None
+            except requests.exceptions.RequestException as e:
+                frappe.log_error(f"Error fetching Shopify data: {e}")
+                break
+
+        # Create sales orders from the filtered orders
+        sales_orders = create_sales_order(orders)
+        return (
+            f"{len(sales_orders)} Sales Orders created successfully from {start_date}!"
+        )
+
+    except Exception as e:
+        frappe.log_error(f"Error during Shopify order sync from date: {e}")
+        frappe.throw(f"An error occurred while syncing Shopify orders: {e}")
+
+
 def calculate_discount(order):
     total_discount = 0
 
@@ -117,7 +170,7 @@ def create_sales_order(orders):
     sales_order_names = []
     for order in orders:
         try:
-            # Check if sales order exists; if not, then create
+            # Check if sales order exists
             if frappe.db.exists("Sales Order", {"shopify_order_id": order.get("id")}):
                 continue
 
@@ -128,11 +181,27 @@ def create_sales_order(orders):
 
             customer_name = (
                 f"{customer_data.get('first_name')} {customer_data.get('last_name')}"
+
             )
-            customer = create_customer(customer_name)
-            address = get_address(order, customer_name)
+            customer_id = customer_data.get("id")
+            customer = create_customer(customer_name, customer_id)
+
+            # If customer creation failed and returned Guest Customer, skip this order
+            if customer == "Guest Customer":
+                frappe.log_error(
+                    f"Failed to create customer for order {order.get('id')}"
+                )
+                continue
+
+            address = get_address(order, customer)
+            if not address:
+                # Create a default billing address if address creation fails
+                address = create_default_address(customer)
+
             items = get_items(order)
-            taxes = get_taxes(order)
+            if not items:
+                frappe.log_error(f"No items found for order {order.get('id')}")
+                continue
 
             # Calculate total discount
             discount_amount = calculate_discount(order)
@@ -145,7 +214,7 @@ def create_sales_order(orders):
                     "customer_address": address,
                     "items": items,
                     "tax_category": get_tax_category(order),
-                    "taxes": taxes,
+                    "taxes": get_taxes(order),
                     "delivery_date": now(),
                     "transaction_date": getdate(order.get("created_at")),
                     "shopify_order_id": order.get("id"),
@@ -158,7 +227,7 @@ def create_sales_order(orders):
                 }
             )
 
-            frappe.flags.ignore_validate = True
+            sales_order.flags.ignore_mandatory = True
             sales_order.insert(ignore_permissions=True)
 
             # Add shipping charges if any
@@ -174,6 +243,40 @@ def create_sales_order(orders):
             continue
 
     return sales_order_names
+
+
+def create_default_address(customer_name):
+    """Create a default billing address for the customer"""
+    address_title = f"{customer_name}-Billing-Default"
+
+    if frappe.db.exists("Address", {"address_title": address_title}):
+        return frappe.get_doc("Address", {"address_title": address_title}).name
+
+    try:
+        address = frappe.get_doc(
+            {
+                "doctype": "Address",
+                "address_title": address_title,
+                "address_type": "Billing",
+                "address_line1": "Default Address",
+                "city": "Default City",
+                "state": "Gujarat",  # Default to Gujarat for proper tax handling
+                "country": "India",
+                "is_primary_address": 1,
+                "is_shipping_address": 1,
+                "links": [{"link_doctype": "Customer", "link_name": customer_name}],
+            }
+        )
+
+        address.flags.ignore_mandatory = True
+        address.insert(ignore_permissions=True)
+        frappe.db.commit()
+        return address.name
+    except Exception as e:
+        frappe.log_error(
+            f"Error creating default address for customer {customer_name}: {str(e)}"
+        )
+        return None
 
 
 def get_tax_category(order):
@@ -250,94 +353,112 @@ def create_item(item_code, item_name):
 def get_taxes(order):
     taxes = []
     tax_included = order.get("taxes_included", False)
-    tax_lines = order.get("tax_lines", [])
 
-    # If there are specific tax lines from Shopify, use those
-    if tax_lines:
-        for tax_line in tax_lines:
-            tax_rate = float(tax_line.get("rate", 0)) * 100  # Convert to percentage
-            tax_title = tax_line.get("title", "")
+    # Get shipping/billing address to determine tax structure
+    shipping_address = order.get("shipping_address", {})
+    billing_address = order.get("billing_address", {})
+    customer_state = (billing_address or shipping_address).get("province", "")
 
-            if "IGST" in tax_title:
-                account_head = "Output Tax IGST - DPL"
-            elif "CGST" in tax_title:
-                account_head = "Output Tax CGST - DPL"
-            elif "SGST" in tax_title:
-                account_head = "Output Tax SGST - DPL"
-            else:
-                # Default to IGST for other cases
-                account_head = "Output Tax IGST - DPL"
+    # Default tax rates
+    cgst_rate = 2.5
+    sgst_rate = 2.5
+    igst_rate = 5.0
 
-            taxes.append(
-                {
-                    "charge_type": "On Net Total",
-                    "account_head": account_head,
-                    "cost_center": "Main - DPL",
-                    "rate": tax_rate,
-                    "description": f"{tax_title} - {tax_rate}%",
-                    "included_in_print_rate": tax_included,
-                }
-            )
-    else:
-        # Fallback to default tax structure based on province
-        tax_category = get_tax_category(order)
-        if tax_category == "Out-state":
-            taxes.append(
-                {
-                    "charge_type": "On Net Total",
-                    "account_head": "Output Tax IGST - DPL",
-                    "cost_center": "Main - DPL",
-                    "rate": 5,
-                    "description": "IGST - 5.00%",
-                    "included_in_print_rate": tax_included,
-                }
-            )
-        else:
-            taxes.append(
+    # For orders within Gujarat, apply CGST + SGST
+    if customer_state.lower() == "gujarat":
+        taxes.extend(
+            [
                 {
                     "charge_type": "On Net Total",
                     "account_head": "Output Tax CGST - DPL",
                     "cost_center": "Main - DPL",
-                    "rate": 2.5,
-                    "description": "CGST - 2.50%",
+                    "rate": cgst_rate,
+                    "description": f"CGST @ {cgst_rate}%",
                     "included_in_print_rate": tax_included,
-                }
-            )
-            taxes.append(
+                },
                 {
                     "charge_type": "On Net Total",
                     "account_head": "Output Tax SGST - DPL",
                     "cost_center": "Main - DPL",
-                    "rate": 2.5,
-                    "description": "SGST - 2.50%",
+                    "rate": sgst_rate,
+                    "description": f"SGST @ {sgst_rate}%",
                     "included_in_print_rate": tax_included,
-                }
-            )
+                },
+            ]
+        )
+    else:
+        # For orders outside Gujarat, apply IGST
+        taxes.append(
+            {
+                "charge_type": "On Net Total",
+                "account_head": "Output Tax IGST - DPL",
+                "cost_center": "Main - DPL",
+                "rate": igst_rate,
+                "description": f"IGST @ {igst_rate}%",
+                "included_in_print_rate": tax_included,
+            }
+        )
 
     return taxes
 
 
-def create_customer(customer_name):
-    if frappe.db.exists("Customer", {"customer_name": customer_name}):
-        customer = frappe.get_doc("Customer", {"customer_name": customer_name})
-    else:
+def create_customer(customer_name, customer_id=None):
+    # Clean the customer name to remove any problematic characters
+    clean_name = (
+        customer_name.strip().replace('"', "").replace("'", "").replace(".", "")
+    )
+
+    if not clean_name:
+        clean_name = "Guest Customer"
+
+    try:
+        # Check if customer exists
+        if frappe.db.exists("Customer", {"shopify_customer_id": customer_id}):
+            customer = frappe.get_doc("Customer", {"shopify_customer_id": customer_id})
+            return customer.name
+
+        # Create new customer
+        customer = frappe.get_doc(
+            {
+                "doctype": "Customer",
+                "customer_name": clean_name,
+                "customer_type": "Individual",
+                "customer_group": "Individual",
+                "territory": "India",
+                "gst_category": "Unregistered",
+                "shopify_customer_id": customer_id,
+            }
+        )
+
+        customer.flags.ignore_mandatory = True
+        customer.flags.ignore_permissions = True
+        customer.insert(ignore_permissions=True, ignore_mandatory=True)
+        frappe.db.commit()
+        return customer.name
+
+    except Exception as e:
+        frappe.log_error(f"Error creating customer {clean_name}: {str(e)}")
+        # Create a fallback customer name with timestamp
+        fallback_name = f"Customer-{now().replace(' ', '-').replace(':', '-')}"
         try:
             customer = frappe.get_doc(
                 {
                     "doctype": "Customer",
-                    "customer_name": customer_name,
+                    "customer_name": fallback_name,
                     "customer_type": "Individual",
                     "customer_group": "Individual",
                     "territory": "India",
                     "gst_category": "Unregistered",
+                    "naming_series": "CUST-.YYYY.-",
                 }
             )
-            customer.insert(ignore_permissions=True)
+            customer.flags.ignore_mandatory = True
+            customer.flags.ignore_permissions = True
+            customer.insert(ignore_permissions=True, ignore_mandatory=True)
             frappe.db.commit()
-        except Exception as e:
-            frappe.log_error(f"Error creating customer {customer_name}: {str(e)}")
-            raise
-    return customer.name
+            return fallback_name
+        except:
+            return "Guest Customer"
 
 
 def get_address(order, customer_name):
